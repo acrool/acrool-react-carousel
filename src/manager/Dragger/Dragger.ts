@@ -14,8 +14,9 @@ import {calcMoveTranslatePx} from './utils';
 
 
 /**
- * 托動控制器
- * unmount 跟 blur 都需要 停止計時器
+ * 拖動控制器
+ * 負責處理桌面 pointer 與手機 touch 事件的拖曳邏輯
+ * unmount 跟 blur 都需要停止計時器
  */
 class Dragger {
     private _configurator: Configurator;
@@ -24,7 +25,11 @@ class Dragger {
     private _locator: Locator;
     private _stater: Stater;
     private _eventor = new Eventor<TEventMap>();
-    private _moveMinDistancePx = 50; // 最少滑動多少距離Px才檢查比例切換上下頁
+
+    /** 一次性消費旗標，拖曳開始時設 true，click capture 消費時設 false */
+    private _isDragged = false;
+    /** 拖曳偵測的最小距離（等同 cdkDrag 內建閾值），低於此值視為點擊而非拖曳 */
+    private _dragThresholdPx = 5;
 
     constructor(manager: {
         configurator: Configurator,
@@ -40,50 +45,82 @@ class Dragger {
     }
 
 
+    /**
+     * 註冊拖曳開始事件與 capture click 攔截器
+     * @param callBack - 拖曳開始時的回呼
+     */
     onDragStart = (callBack?: TEventMap['dragStart']) => {
         if(this._elementor.containerEl){
             if(checkIsMobile()){
                 this._elementor.containerEl.addEventListener('touchstart', this._onMobileTouchStart, {passive: false});
             }else{
-                this._elementor.containerEl.addEventListener('pointerdown', this._onWebMouseStart, {passive: false} as any);
+                this._elementor.containerEl.addEventListener('pointerdown', this._onWebMouseStart, {passive: false} as EventListenerOptions);
             }
+        }
+
+        if(this._elementor.rootEl){
+            this._elementor.rootEl.addEventListener('click', this._onCaptureClick, true);
         }
 
         this._eventor.on('dragStart', callBack);
     };
 
+    /**
+     * 註冊拖曳移動事件
+     * @param callBack - 拖曳移動時的回呼
+     */
     onDragMove = (callBack?: TEventMap['dragMove']) => {
         this._eventor.on('dragMove', callBack);
     };
 
+    /**
+     * 註冊拖曳結束事件
+     * @param callBack - 拖曳結束時的回呼
+     */
     onDragEnd = (callBack?: TEventMap['dragEnd']) => {
         this._eventor.on('dragEnd', callBack);
     };
 
+    /**
+     * 移除拖曳開始事件與 capture click 攔截器
+     * @param callBack - 要移除的回呼
+     */
     offDragStart = (callBack?: TEventMap['dragStart']) => {
         if(this._elementor.containerEl){
             if(checkIsMobile()) {
-                this._elementor.containerEl.removeEventListener('touchstart', this._onMobileTouchStart, {passive: false} as any);
+                this._elementor.containerEl.removeEventListener('touchstart', this._onMobileTouchStart, {passive: false} as EventListenerOptions);
             }else{
-                this._elementor.containerEl.removeEventListener('pointerdown', this._onWebMouseStart, {passive: false} as any);
+                this._elementor.containerEl.removeEventListener('pointerdown', this._onWebMouseStart, {passive: false} as EventListenerOptions);
             }
+        }
+
+        if(this._elementor.rootEl){
+            this._elementor.rootEl.removeEventListener('click', this._onCaptureClick, true);
         }
 
         this._eventor.off('dragStart', callBack);
     };
 
+    /**
+     * 移除拖曳移動事件
+     * @param callBack - 要移除的回呼
+     */
     offDragMove = (callBack?: TEventMap['dragMove']) => {
         this._eventor.off('dragMove', callBack);
     };
 
+    /**
+     * 移除拖曳結束事件
+     * @param callBack - 要移除的回呼
+     */
     offDragEnd = (callBack?: TEventMap['dragEnd']) => {
         this._eventor.off('dragEnd', callBack);
     };
 
 
     /**
-     * mobile phone finger press start
-     * @param event
+     * 手機觸控開始
+     * @param event - TouchEvent
      */
     private _onMobileTouchStart = (event: TouchEvent): void => {
         if(this._configurator.setting.isDebug && logEnable.dragger.onMobileTouchStart) logger.printInText('[Dragger._onMobileTouchStart]');
@@ -92,21 +129,18 @@ class Dragger {
         this._dragStart();
         this._eventor.emit('dragStart');
         const {containerEl} = this._elementor;
-        if (containerEl) {
+        if (!containerEl) return;
 
-            // 移動到開始位置 避免跳動
-            this._locator.touchStart(new MobileTouchEvent(event), containerEl);
+        this._locator.touchStart(new MobileTouchEvent(event), containerEl);
 
-            // 設定移動 與 結束事件
-            document.addEventListener('touchmove', this._onMobileTouchMove, {passive: false});
-            document.addEventListener('touchend', this._onMobileTouchEnd, {passive: false});
-        }
+        document.addEventListener('touchmove', this._onMobileTouchMove, {passive: false});
+        document.addEventListener('touchend', this._onMobileTouchEnd, {passive: false});
     };
 
 
     /**
-     * Mobile phone finger press and move
-     * @param event
+     * 手機觸控移動
+     * @param event - TouchEvent
      */
     private _onMobileTouchMove = (event: TouchEvent): void => {
         event.stopPropagation();
@@ -125,20 +159,19 @@ class Dragger {
             });
         }
 
+        if(!this._elementor.containerEl || !this._locator._letItGo) return;
 
+        event.preventDefault(); // 開始滑動禁止捲動BodyScroll
 
-        if(this._elementor.containerEl && this._locator._letItGo){
-            event.preventDefault(); // 開始滑動禁止捲動BodyScroll
-            const movePx = this._locator.touchMove(touchEvent, this._elementor.containerEl);
-            this._dragMove(movePx.x);
-        }
+        const movePx = this._locator.touchMove(touchEvent, this._elementor.containerEl);
+        this._dragMove(movePx.x);
     };
 
     /**
-     * Mobile phone finger press to end
-     * @param event
+     * 手機觸控結束
+     * @param event - TouchEvent
      *
-     * PS: Add event.preventDefault(); will affect the mobile phone click onClick event
+     * PS: 不可加 event.preventDefault()，會影響手機 click onClick 事件
      */
     private _onMobileTouchEnd = (event: TouchEvent): void => {
         if(this._configurator.setting.isDebug && logEnable.dragger.onMobileTouchEnd) logger.printInText('[Dragger._onMobileTouchEnd]');
@@ -154,12 +187,9 @@ class Dragger {
     };
 
 
-
-
-
     /**
-     * Web mouse click
-     * @param event
+     * 桌面滑鼠按下
+     * @param event - PointerEvent
      */
     private _onWebMouseStart = (event: PointerEvent): void => {
         event.preventDefault();
@@ -170,56 +200,42 @@ class Dragger {
         this._dragStart();
         this._eventor.emit('dragStart');
 
-
         const {containerEl} = this._elementor;
-        if (containerEl) {
+        if (!containerEl) return;
 
-            // 移動到開始位置 避免跳動
-            this._locator.touchStart(new PointerTouchEvent(event), containerEl);
-            const {startPosition} = this._locator;
-            const translateX = calcMoveTranslatePx(startPosition.x, event.clientX);
-            this._elState
-                .transform({translateX});
+        this._locator.touchStart(new PointerTouchEvent(event), containerEl);
+        const {startPosition} = this._locator;
+        const translateX = calcMoveTranslatePx(startPosition.x, event.clientX);
+        this._elState
+            .transform({translateX});
 
-            // 設定移動 與 結束事件
-            document.addEventListener('pointermove', this._onWebMouseMove, false);
-            document.addEventListener('pointerup', this._onWebMouseEnd, false);
-            document.addEventListener('pointercancel', this._onWebMouseEnd, false);
-        }
-
+        document.addEventListener('pointermove', this._onWebMouseMove, false);
+        document.addEventListener('pointerup', this._onWebMouseEnd, false);
+        document.addEventListener('pointercancel', this._onWebMouseEnd, false);
     };
 
 
     /**
-     * Web mouse movement
-     * @param event
+     * 桌面滑鼠移動
+     * @param event - PointerEvent
      */
     private _onWebMouseMove = (event: PointerEvent):void => {
         event.preventDefault();
         if(this._configurator.setting.isDebug && logEnable.dragger.onWebMouseMove) logger.printInText('[Dragger._onWebMouseMove]');
 
+        if(!this._elementor.containerEl) return;
 
-        // 判斷距離是否影響 onClick (只有桌面做開關)
-        const startEndMoveX = this._locator._endPosition.pageX - this._locator._startPosition.pageX;
-        if(Math.abs(startEndMoveX) > this._moveMinDistancePx) {
-            this._elState.setTouching(true);
-        }
-
-        if(this._elementor.containerEl){
-            this._elementor.containerEl.setPointerCapture(event.pointerId);
-            const movePx = this._locator.touchMove(new PointerTouchEvent(event), this._elementor.containerEl);
-
-            this._dragMove(movePx.x);
-        }
+        this._elementor.containerEl.setPointerCapture(event.pointerId);
+        const movePx = this._locator.touchMove(new PointerTouchEvent(event), this._elementor.containerEl);
+        this._dragMove(movePx.x);
     };
 
     /**
-     * web mouse release
-     * @param event
+     * 桌面滑鼠放開
+     * @param event - PointerEvent
      */
     private _onWebMouseEnd = (event: PointerEvent):void => {
         event.preventDefault();
-        this._elState.setTouching(false); // 只有桌面做開關
 
         if(this._configurator.setting.isDebug && logEnable.dragger.onWebMouseEnd) logger.printInText('[Dragger._onWebMouseEnd]');
 
@@ -230,38 +246,61 @@ class Dragger {
     };
 
 
+    /**
+     * Capture 階段攔截 click 事件
+     * 當偵測到拖曳時，阻止 click 冒泡到子元素的 onClick
+     * 攔截後立即消費旗標，確保下一次 click 正常放行
+     * @param event - MouseEvent
+     */
+    private _onCaptureClick = (event: MouseEvent): void => {
+        if(!this._isDragged) return;
+
+        event.stopPropagation();
+        event.preventDefault();
+        this._isDragged = false;
+    };
 
 
+    /**
+     * 拖曳開始，輸出除錯訊息
+     */
     private _dragStart() {
         if(this._configurator.setting.isDebug && logEnable.dragger.onDragStart) logger.printInText('[Dragger._dragStart]');
-
     }
 
+    /**
+     * 處理拖曳移動中的位移與效果計算
+     * @param moveX - 水平移動距離（px）
+     */
     private _dragMove(moveX: number) {
         if(this._configurator.setting.isDebug && logEnable.dragger.onDragMove) logger.printInText('[Dragger._dragMove]');
 
         const {setting} = this._configurator;
 
-        if (this._elementor.containerEl &&
-            setting.isEnableMouseMove &&
-            this._elementor.slideItemEls &&
-            this._stater.page.total > 1
-        ) {
-            const percentage = this._elState.getMovePercentage(moveX); //TODO: 應該移動到 Positioner
+        if (!this._elementor.containerEl ||
+            !setting.isEnableMouseMove ||
+            !this._elementor.slideItemEls ||
+            this._stater.page.total <= 1
+        ) return;
 
-            // 同步控制
-            this._eventor.emit('dragMove', percentage);
+        // ⭐ 等同 cdkDrag 內建閾值：低於最小距離不算拖曳，避免手指點擊微移誤判
+        if(Math.abs(moveX) < this._dragThresholdPx) return;
 
-            this._elState
-                .transform({translateX: moveX})
-                .moveEffect(percentage);
-        }
+        // ⭐ 等同指南的 onDragStarted()：確認拖曳發生，設定一次性消費旗標
+        this._isDragged = true;
+
+        const percentage = this._elState.getMovePercentage(moveX); //TODO: 應該移動到 Positioner
+
+        this._eventor.emit('dragMove', percentage);
+
+        this._elState
+            .transform({translateX: moveX})
+            .moveEffect(percentage);
     }
 
 
-
     /**
-     * The object movement ends (confirm the stop position and which Index position should be sucked)
+     * 拖曳結束，確認停止位置並吸附至目標 Index
      */
     private _dragEnd = (): void => {
         if(this._configurator.setting.isDebug && logEnable.dragger.onDragEnd) logger.printInText('[Dragger._dragEnd]');
