@@ -11,16 +11,6 @@
 
 
 
-    &[data-touching]{
-        .pagination-group,
-        .slide-item {
-            pointer-events: none;
-        }
-        .nav-group{
-            pointer-events: none;
-        }
-    }
-
     &[data-gpu-render] {
         .container{
             will-change: transform;

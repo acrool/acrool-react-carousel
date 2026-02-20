@@ -154,23 +154,6 @@ class ElState {
     };
 
 
-    /**
-     * 設定是否移動中
-     * 加上狀態讓其他元素不會影響滑動
-     * @param isEnable
-     */
-    setTouching = (isEnable: boolean) => {
-        if(isEnable){
-            if(this._elementor.rootEl){
-                this._elementor.rootEl.dataset.touching = '';
-            }
-        }else{
-            if(this._elementor.rootEl) {
-                this._elementor.rootEl.removeAttribute('data-touching');
-            }
-        }
-    };
-
 
 
 
