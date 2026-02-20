@@ -28,6 +28,8 @@ class Dragger {
 
     /** 一次性消費旗標，拖曳開始時設 true，click capture 消費時設 false */
     private _isDragged = false;
+    /** 拖曳偵測的最小距離（等同 cdkDrag 內建閾值），低於此值視為點擊而非拖曳 */
+    private _dragThresholdPx = 5;
 
     constructor(manager: {
         configurator: Configurator,
@@ -259,6 +261,9 @@ class Dragger {
     };
 
 
+    /**
+     * 拖曳開始，輸出除錯訊息
+     */
     private _dragStart() {
         if(this._configurator.setting.isDebug && logEnable.dragger.onDragStart) logger.printInText('[Dragger._dragStart]');
     }
@@ -277,6 +282,9 @@ class Dragger {
             !this._elementor.slideItemEls ||
             this._stater.page.total <= 1
         ) return;
+
+        // ⭐ 等同 cdkDrag 內建閾值：低於最小距離不算拖曳，避免手指點擊微移誤判
+        if(Math.abs(moveX) < this._dragThresholdPx) return;
 
         // ⭐ 等同指南的 onDragStarted()：確認拖曳發生，設定一次性消費旗標
         this._isDragged = true;
